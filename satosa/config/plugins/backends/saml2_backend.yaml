@@ -1,0 +1,32 @@
+module: satosa.backends.saml2.SAMLBackend
+name: Saml2
+config:
+  mirror_force_authn: no
+  memorize_idp: no
+  use_memorized_idp_when_force_authn: no
+  entityid_endpoint: true
+  attribute_profile: saml
+  sp_config:
+    attribute_map_dir: '/etc/satosa/config/attributemaps'
+    allow_unknown_attributes: true
+    key_file: /etc/satosa/config/metadata.key
+    cert_file: /etc/satosa/config/metadata.crt
+    organization: {display_name: !ENV ORG_DISPLAY_NAME, name: !ENV ORG_NAME, url: !ENV ORG_URL}
+    metadata: 
+      remote: 
+        - url: !ENV IDP_METADATA_URL
+          cert: null   
+    entityid: !ENV SP_ENTITY_ID
+    accepted_time_diff: 60
+    service:
+      sp:
+        authn_requests_signed: false
+        want_response_signed: true
+        want_assertions_signed: true
+        allow_unsolicited: true
+        want_assertions_or_response_signed: true #This won't do anything unless want_response_signed and want_assertions_signed are both set to false
+        endpoints:
+          assertion_consumer_service:
+          - [<base_url>/<name>/acs/post, 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST']
+        name_id_format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent'
+        name_id_format_allow_create: true

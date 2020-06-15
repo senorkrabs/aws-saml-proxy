@@ -1,0 +1,50 @@
+module: satosa.frontends.custom.saml2_custom.SAMLUnsolicitedFrontend
+name: Saml2IDP
+config:
+  unsolicited:
+    endpoint: unsolicited
+    allowed_relay_state_urls:
+      "urn:amazon:webservices":
+          - https://appstream2.us-east-1.aws.amazon.com/saml
+          - https://appstream2.us-west-2.aws.amazon.com/saml
+          - https://appstream2.ap-northeast-2.aws.amazon.com/saml
+          - https://appstream2.ap-northeast-1.aws.amazon.com/saml
+          - https://appstream2.ap-southeast-2.aws.amazon.com/saml
+          - https://appstream2.ap-southeast-1.aws.amazon.com/saml
+          - https://appstream2.eu-central-1.aws.amazon.com/saml
+          - https://appstream2.eu-west-1.aws.amazon.com/saml
+  entityid_endpoint: true
+  attribute_profile: saml
+  idp_config:
+    organization: {display_name: !ENV ORG_DISPLAY_NAME, name: !ENV ORG_NAME, url: !ENV ORG_URL}
+    key_file: /etc/satosa/config/metadata.key
+    cert_file: /etc/satosa/config/metadata.crt
+    metadata:
+      remote: 
+        - url: https://signin.aws.amazon.com/static/saml-metadata.xml
+          cert: null
+    entityid: !ENV IDP_ENTITY_ID
+    allow_unknown_attributes: true
+    accepted_time_diff: 60
+    attribute_map_dir: '/etc/satosa/config/attributemaps'
+    service:
+      idp:
+        endpoints:
+          single_sign_on_service: []
+        name: ProxyIdP
+        name_id_format: ['urn:oasis:names:tc:SAML:2.0:nameid-format:persistent', 'urn:oasis:names:tc:SAML:2.0:nameid-format:transient']
+        policy:
+          default:
+            sign_assertion: true
+            sign_response: true
+            attribute_restrictions: null
+            fail_on_missing_requested: false
+            lifetime: {minutes: 16}
+            name_form: urn:oasis:names:tc:SAML:2.0:attrname-format:uri
+            encrypt_assertion: false
+            encrypted_advice_attributes: false
+  endpoints:
+    single_sign_on_service:
+      'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST': sso/post
+      'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect': sso/redirect
+

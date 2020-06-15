@@ -1,0 +1,5 @@
+module: satosa.micro_services.custom.custom_nameid.ConvertUpnToSamAccountFormat
+name: ConvertUpnToSamAccountFormat
+config: 
+    domain_to_upper: true
+    

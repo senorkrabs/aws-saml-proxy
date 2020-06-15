@@ -1,0 +1,567 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  RepoSourceBucket:
+    Type: String
+    Description: The S3 bucket from which to fetch the code.zip used by this stack (i.e. my-bucket-artifacts-bucket-name)
+  Dns:
+    Type: String
+    Description: The Dns address for your proxy. (i.e. samlproxy.domain.com). This will be used to generate Entity IDs and the metadata certificate.
+  IdpMetadataUrl:
+    Description: The Url where the metadata for the target IdP can be downloaded from. (i.e. https://shibboleth.domain.com/idp/shibboleth)
+    Type: String
+  AcmCertificateArn:
+    Description: The Amazon Resource Name (ARN) of the AWS Certificate Manager (ACM) certificate that will be installed on the load balancer and used to secure client communication. 
+    Type: String        
+  OrgName:
+    Description: The name of the organization (i.e. Company Inc.)
+    Type: String      
+  OrgDisplayName:
+    Description: The display name of the organization (i.e. Company Inc.)
+    Type: String
+  OrgUrl: 
+    Description: the url of the organization (i.e. https://domain.com)
+    Type: String    
+  AWSRoute53HostedZoneName:
+    Description: (optional) The Route53 DNS hosted zone name where a DNS entry for the cluster load balancer will be created. For example, if the hosted zone name is "example.com" enter "example.com" without parenthesis. 
+    Type: String
+    Default: ''
+  AWSRoute53DnsRecordSetName:
+    Description: (optional) The DNS entry to create in the hosted zone for the cluster load balancer. For example, if the hosted zone is "example.com" and "site.example.com" should redirect to the load balancer, enter "site" without parentheses
+    Type: String    
+    Default: ''
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+      - Label: 
+          default: Installation
+        Parameters:
+          - RepoSourceBucket    
+      - Label: 
+          default: Proxy Configuration
+        Parameters:
+          - Dns
+          - IdpMetadataUrl
+          - OrgName
+          - OrgDisplayName
+          - OrgUrl
+          - AcmCertificateArn   
+      - Label: 
+          default: Route53 DNS (optional)
+        Parameters:
+          - AWSRoute53HostedZoneName
+          - AWSRoute53DnsRecordSetName          
+Resources:
+
+  # These need to be created prior to running the pipeline so that we have a location to store the generated private key
+  PrivateKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Private Key used for metadata
+  MetadataCertificateSecret:
+    Type: AWS::SecretsManager::Secret  
+    Properties:    
+      Description: Certificate used for metadata
+      
+
+
+  CodeCommitRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties: 
+      RepositoryDescription: Main code repository for holding the Docker build files
+      RepositoryName: !Sub ${AWS::StackName}-repo
+      Code:
+        S3: 
+          Bucket: !Ref RepoSourceBucket
+          Key: 'code.zip'
+
+  ECRRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${AWS::StackName}-image
+
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+
+  CodeBuildServiceRolePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub ${AWS::StackName}-CodeBuildServiceRolePolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Resource: !GetAtt CodeBuildServiceRole.Arn
+            Effect: Allow
+            Action:
+              - sts:AssumeRole
+          - Resource: "*"
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - ecr:GetAuthorizationToken
+          - Resource: !Sub arn:aws:s3:::${ArtifactBucket}/*
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:GetObjectVersion
+          - Resource: !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ECRRepo}
+            Effect: Allow
+            Action:
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:BatchCheckLayerAvailability
+              - ecr:PutImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+      Roles:
+        - !Ref CodeBuildServiceRole
+  CodeBuildSecretPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Action:
+          - secretsmanager:DescribeSecret
+          - secretsmanager:GetSecretValue
+          - secretsmanager:PutSecretValue
+          - secretsmanager:UpdateSecretVersionStage
+          Effect: Allow
+          Resource:
+          - !Ref PrivateKeySecret
+          - !Ref MetadataCertificateSecret
+      PolicyName: !Join ['-', [!Ref 'AWS::StackName', TaskExecutionSecretPolicy]]
+      Roles:
+        - !Ref 'CodeBuildServiceRole' 
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Resource:
+                  - !Sub arn:aws:s3:::${ArtifactBucket}/*
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+              - Resource: !GetAtt CodeCommitRepo.Arn
+                Effect: Allow
+                Action:
+                  - codecommit:GetCommit
+                  - codecommit:GetUploadArchiveStatus
+                  - codecommit:GetBranch
+                  - codecommit:UploadArchive
+              - Resource: "*"
+                Effect: Allow
+                Action:
+                  - ecs:DescribeServices
+                  - ecs:DescribeTaskDefinition
+                  - ecs:DescribeTasks
+                  - ecs:ListTasks
+                  - ecs:RegisterTaskDefinition
+                  - ecs:UpdateService
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                  - cloudformation:CreateStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DeleteStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:SetStackPolicy
+                  - sns:Publish                  
+                  - iam:PassRole
+  CodePipelineCloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: cloudformation.amazonaws.com
+        Version: 2012-10-17
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Resource: '*' 
+                Effect: Allow
+                Action: 
+                  - ec2:*
+                  - ecs:*
+                  - iam:*
+                  - elasticloadbalancing:*
+                  - secretsmanager:*
+                  - logs:*
+                  - route53:*
+                  - application-autoscaling:*
+                  - s3:*
+  AmazonCloudWatchEventRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies:
+        -
+          PolicyName: cwe-pipeline-execution
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action: codepipeline:StartPipelineExecution
+                Resource: !Join [ '', [ 'arn:aws:codepipeline:', !Ref 'AWS::Region', ':', !Ref 'AWS::AccountId', ':', !Ref Pipeline ] ] 
+
+  AmazonCloudWatchEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - 'CodeCommit Repository State Change'
+        resources:
+          - !Sub 'arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${CodeCommitRepo.Name}'
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - master
+      Targets:
+        -
+          Arn: 
+            !Join [ '', [ 'arn:aws:codepipeline:', !Ref 'AWS::Region', ':', !Ref 'AWS::AccountId', ':', !Ref Pipeline ] ]
+          RoleArn: !GetAtt AmazonCloudWatchEventRole.Arn
+          Id: codepipeline-AppPipeline
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+  
+  CreateParametersCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Description: "Generates a JSON string that will be used as input paramters for deploying a CloudFormation stack."
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                python: 3.8
+            build:
+              commands:
+                - cat $CODEBUILD_SRC_DIR_VpcOut/vpc.json
+                - |
+                  jq -n \
+                  --arg AWSRoute53HostedZoneName "$AWSRoute53HostedZoneName" \
+                  --arg AWSRoute53DnsRecordSetName "$AWSRoute53DnsRecordSetName" \
+                  --arg AcmCertificateArn "$AcmCertificateArn" \
+                  --arg BaseUrl "$BaseUrl" \
+                  --arg IdpMetadataUrl "$IdpMetadataUrl" \
+                  --arg OrgDisplayName "$OrgDisplayName" \
+                  --arg OrgName "$OrgName" \
+                  --arg OrgUrl "$OrgUrl" \
+                  --arg PrivateKeySecretArn "$PrivateKeySecretArn" \
+                  --arg MetadataCertSecretArn "$MetadataCertSecretArn" \
+                  --arg VPC $(cat $CODEBUILD_SRC_DIR_VpcOut/vpc.json | jq -r '.VPCID') \
+                  --arg ClusterSubnets $(cat $CODEBUILD_SRC_DIR_VpcOut/vpc.json | jq -r '.PrivateSubnet1AID + "," + .PrivateSubnet2AID') \
+                  --arg LoadBalancerSubnets $(cat $CODEBUILD_SRC_DIR_VpcOut/vpc.json | jq -r '.PublicSubnet1ID + "," + .PublicSubnet2ID') \
+                  '{
+                      Parameters: {
+                        AWSRoute53HostedZoneName: $AWSRoute53HostedZoneName,
+                        AWSRoute53DnsRecordSetName: $AWSRoute53DnsRecordSetName, 
+                        AcmCertificateArn: $AcmCertificateArn,
+                        BaseUrl: $BaseUrl,              
+                        IdpMetadataUrl: $IdpMetadataUrl, 
+                        OrgName: $OrgName, 
+                        OrgDisplayName: $OrgDisplayName,
+                        OrgUrl: $OrgUrl,
+                        PrivateKeySecretArn: $PrivateKeySecretArn, 
+                        MetadataCertSecretArn: $MetadataCertSecretArn,
+                        VPC: $VPC,
+                        ClusterSubnets: $ClusterSubnets,
+                        LoadBalancerSubnets: $LoadBalancerSubnets
+                      }
+                    }'  > parameters.json
+                - cat parameters.json
+          artifacts:
+            files: parameters.json
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        Type: LINUX_CONTAINER
+        PrivilegedMode: true  
+        EnvironmentVariables:
+          - Name: AWSRoute53HostedZoneName
+            Value: !Ref AWSRoute53HostedZoneName
+          - Name: AWSRoute53DnsRecordSetName
+            Value: !Ref AWSRoute53DnsRecordSetName
+          - Name: AcmCertificateArn
+            Value: !Ref AcmCertificateArn
+          - Name: BaseUrl
+            Value: !Sub https://${Dns}
+          - Name: IdpMetadataUrl
+            Value: !Ref IdpMetadataUrl
+          - Name: OrgName
+            Value: !Ref OrgName
+          - Name: OrgDisplayName
+            Value: !Ref OrgDisplayName
+          - Name: OrgUrl
+            Value: !Ref OrgUrl
+          - Name: PrivateKeySecretArn
+            Value: !Ref PrivateKeySecret
+          - Name: MetadataCertSecretArn
+            Value: !Ref MetadataCertificateSecret
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+      Name: !Sub ${AWS::StackName}-CreateParameters
+      ServiceRole: !Ref CodeBuildServiceRole        
+
+  DockerCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Description: "Builds the Docker image used to run the application, stores it in ECR, and writes the image Url to the images.json artifact"
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: 'buildspecs/buildspec-buildimage.yml'
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        Type: LINUX_CONTAINER
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: REPOSITORY_URI
+            Type: PLAINTEXT
+            Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepo}
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+      Name: !Sub ${AWS::StackName}-BuildImage
+      ServiceRole: !Ref CodeBuildServiceRole
+
+  GenerateKeysCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Description: "Checks if metadata key and certificate exist in AWS Secrets Manager and, if not, generates them"
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: 'buildspecs/buildspec-generatekeys.yml'
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        Type: LINUX_CONTAINER
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: CN
+            Type: PLAINTEXT
+            Value: !Ref Dns
+          - Name: PRIVATE_KEY_SECRET_ARN
+            Type: PLAINTEXT
+            Value: !Ref PrivateKeySecret
+          - Name: METADATA_CERT_SECRET_ARN
+            Type: PLAINTEXT
+            Value: !Ref MetadataCertificateSecret          
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+      Name: !Sub ${AWS::StackName}-GenerateKeys
+      ServiceRole: !Ref CodeBuildServiceRole      
+
+  PrivateKeyCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Description: "Generates the private key and metadata certificate for the SAML proxy if they don't yet exist in Secrets Manager."
+      Artifacts:
+        Type: CODEPIPELINE
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: 'buildspecs/buildspec-createkey.yml'
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        Type: LINUX_CONTAINER
+        PrivilegedMode: true
+      Name: !Sub ${AWS::StackName}-CreatePrivateKey
+      ServiceRole: !Ref CodeBuildServiceRole 
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: ApplicationSource
+              RunOrder: 1  
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: '1'
+              Configuration:
+                BranchName: master
+                PollForSourceChanges: false
+                RepositoryName: !Sub '${CodeCommitRepo.Name}'
+              InputArtifacts: []
+              OutputArtifacts:
+                - Name: Source               
+        - Name: Build
+          Actions:
+            - Name: BuildImage
+              RunOrder: 1
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: '1'
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref DockerCodeBuildProject
+              InputArtifacts:
+                - Name: Source
+              OutputArtifacts:
+                - Name: ImageBuild        
+            - Name: GenerateKeys
+              RunOrder: 1 
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: '1'
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref GenerateKeysCodeBuildProject
+              InputArtifacts:
+                - Name: Source
+            - Name: CreateVPC
+              RunOrder: 1
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: REPLACE_ON_FAILURE
+                StackName: !Sub ${AWS::StackName}-vpc
+                Capabilities: CAPABILITY_IAM
+                RoleArn: !GetAtt CodePipelineCloudFormationRole.Arn
+                TemplatePath: Source::cfn-templates/cfn-vpc.yml
+                OutputFileName: vpc.json
+              InputArtifacts:
+                - Name: Source
+              OutputArtifacts:
+                - Name: VpcOut                             
+        - Name: DeployCluster
+          Actions:
+            - Name: GenerateClusterParameters
+              RunOrder: 1 
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: '1'
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref CreateParametersCodeBuildProject
+                PrimarySource: Source
+              InputArtifacts:
+                - Name: Source
+                - Name: VpcOut
+              OutputArtifacts:
+                - Name: ClusterParameters
+            - Name: CreateCluster
+              RunOrder: 2
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              Configuration:
+                ActionMode: REPLACE_ON_FAILURE
+                StackName: !Sub ${AWS::StackName}-fargate
+                Capabilities: CAPABILITY_IAM
+                RoleArn: !GetAtt CodePipelineCloudFormationRole.Arn
+                TemplatePath: Source::cfn-templates/cfn-ecs-fargate-cluster.yml 
+                TemplateConfiguration: ClusterParameters::parameters.json
+                ParameterOverrides: |
+                  {
+                  "ImageUrl": {"Fn::GetParam": ["ImageBuild", "image.json", "imageUri"]}
+                  }
+              InputArtifacts:
+                - Name: Source
+                - Name: VpcOut
+                - Name: ImageBuild
+                - Name: ClusterParameters
+              OutputArtifacts:
+                - Name: CfnClusterOutput                   
+        # Can't specify multiple input artifacts, so using CloudFormation to deploy instead.
+        # - Name: Deploy
+        #   Actions:
+        #     - Name: Deploy
+        #       ActionTypeId:
+        #         Category: Deploy
+        #         Owner: AWS
+        #         Version: '1'
+        #         Provider: ECS
+        #       Configuration:
+        #         ClusterName: !Ref Cluster
+        #         ServiceName: !Ref Service
+        #         FileName: images.json
+        #       InputArtifacts:
+        #         - Name: SamlProxyBuild
+        #         - Name: CfnClusterOutput
+        #       RunOrder: 1
+
+
+Outputs:
+  PipelineUrl:
+    Value: !Sub https://console.aws.amazon.com/codepipeline/home?region=${AWS::Region}#/view/${Pipeline}

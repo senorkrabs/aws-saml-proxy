@@ -1,0 +1,10 @@
+attributes:
+  #AWS Attributes
+  role: 
+    saml: [RoleEntitlement]
+  rolesessionname:
+    saml: [RoleSessionName]
+  sessionduration:
+    saml: [SessionDuration]
+  transitivetagkeys:
+    saml: [TransitiveTagKeys]
