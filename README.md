@@ -14,7 +14,7 @@ The saml-project project uses [SATOSA](https://github.com/IdentityPython/SATOSA)
 - Secure - The private key used for SAML Metadata is automatically generated and securely stored in Secrets Manager. 
 - Customizable - After deploying the solution, you can connect to the CodeCommit Repo and further customize the SATOSA configuration as desired. Can be used with other SPs as well as a SAML-OIDC or SAML-Social Login solution. See [SATOSA docs](https://github.com/IdentityPython/SATOSA) for details. Commit changes to the repo and CodePipeline will automatically re-deploy.
 
-Architecture:
+## Architecture
 ![Architecture Diagram](saml-proxy.png "Architecture Diagram")
 
 
