@@ -1,9 +1,5 @@
 # saml-proxy: A customized SATOSA SAML-SAML proxy on Fargate
 
-Author: Matt Boyd
-
-Created: 2020-06-14
-
 This project contains contains code to automate the deployment of a SAML proxy that is configured to "Proxy" SAML assertions between an identity provider and the AWS Service Provider. 
 
 Out of the box, the SAML proxy is configured to support AppStream customers that need to convert the format of the subject (NameID) from `username@domain.com` to `DOMAIN.COM\username` when their IdP cannot support this transformation. This specific transformation was needed for a customer that uses an MIT Kerberos cross-realm trust that is case-sensitive and would only work with the `SAMAccountName` format, but their `IdP` could only send the `NameID` in `UserPrincipalName` format with a lowercase domain.  Though this is likely an edge case, the proxy could also be configured to support a variety of other scenarios, such taking a a SAML attribute receivedd from the source IdP and passing that back to the AWS SP as the `NameID`, or enriching the response assertion by injecting addtional attributes from an external source (i.e. LDAP)
@@ -41,7 +37,7 @@ Architecture:
 
 2. If you want to automatically create a DNS Record in Route53, ensure you already have a Hosted Zone created.
 
-3. Download `code.zip` (an archive of the repo) and upload it to the S3 bucket
+3. Download `code.zip` (an archive of the repo located in the root folder) and upload it to the S3 bucket
 
 4. Create an S3 bucket and copy the files in the cloudformation directory into it
 
@@ -133,7 +129,7 @@ Anytime a commit to the repo occurs, it will automatically trigger CodePipeline 
 
 The exception to this is if you want to make changes to the pipeline itself, via the cfn-pipeline.yml template used initially to deploy the initial stack. Any changes to this will require manually updating the stack.
 
-| :information_source: Important| 
+| :information_source:  &nbsp;&nbsp; Important| 
 |:-|
 | If modifying the CloudFormation templates, remember that the behavior/rules of CloudFormation still apply. If extensive customization is required, it is recommended that you setup a copy of this project for dev/test.  | 
 
