@@ -4,6 +4,9 @@ Parameters:
   RepoSourceBucket:
     Type: String
     Description: The S3 bucket from which to fetch the code.zip used by this stack (i.e. my-bucket-artifacts-bucket-name)
+  PipelineApprovalEmail:
+    Type: String
+    Description: The email address where notifications will be sent when a manual approval is required to release to production.
   Dns:
     Type: String
     Description: The Dns address for your proxy. (i.e. samlproxy.domain.com). This will be used to generate Entity IDs and the metadata certificate.
@@ -30,6 +33,25 @@ Parameters:
     Description: (optional) The DNS entry to create in the hosted zone for the cluster load balancer. For example, if the hosted zone is "example.com" and "site.example.com" should redirect to the load balancer, enter "site" without parentheses
     Type: String    
     Default: ''
+  VPC:
+    Description: (optional) The Id of a VPC to place the cluster into. If unspecified, a VPC will be created.
+    #Type: AWS::EC2::VPC::Id
+    Type: String
+    Default: ''
+    AllowedPattern: '^$|vpc-[a-zA-Z0-9]+$'  
+    ConstraintDescription: Must match VPC ID pattern (vpc-123a456b) or be empty
+  ClusterSubnets:
+    Description: The subnets the cluster will use. Make sure these reside in the selected VPC.
+    #Type: List<AWS::EC2::Subnet::Id>
+    Type: String    
+    AllowedPattern: '^$|(subnet-[a-zA-Z0-9]+,*)+'
+    ConstraintDescription: Must be a comma-delimited list of subnet Ids (subnet-123a456b) or empty. No whitespace.
+  LoadBalancerSubnets:
+    Description: The subnets the load balancer will use. Make sure tehse reside in the selected VPC. 
+    #Type: List<AWS::EC2::Subnet::Id> 
+    Type: String       
+    AllowedPattern: '^$|(subnet-[a-zA-Z0-9]+,*)+'
+    ConstraintDescription: Must be a comma-delimited list of subnet Ids (subnet-123a456b) or empty. No whitespace.
 
 Metadata:
   'AWS::CloudFormation::Interface':
@@ -37,7 +59,8 @@ Metadata:
       - Label: 
           default: Installation
         Parameters:
-          - RepoSourceBucket    
+          - RepoSourceBucket
+          - PipelineApprovalEmail    
       - Label: 
           default: Proxy Configuration
         Parameters:
@@ -46,12 +69,21 @@ Metadata:
           - OrgName
           - OrgDisplayName
           - OrgUrl
-          - AcmCertificateArn   
+          - AcmCertificateArn         
       - Label: 
           default: Route53 DNS (optional)
         Parameters:
           - AWSRoute53HostedZoneName
           - AWSRoute53DnsRecordSetName          
+      - Label:
+          default: Networking (optional)
+        Parameters:
+          - VPC
+          - ClusterSubnets
+          - LoadBalancerSubnets
+Conditions:
+  ExistingVPC: !Not [!Equals [!Ref 'VPC', '']]
+
 Resources:
 
   # These need to be created prior to running the pipeline so that we have a location to store the generated private key
@@ -294,7 +326,15 @@ Resources:
                 python: 3.8
             build:
               commands:
-                - cat $CODEBUILD_SRC_DIR_VpcOut/vpc.json
+                - | 
+                  /bin/bash -c 'if [ -f $CODEBUILD_SRC_DIR_VpcOut/vpc.json ]; 
+                  then 
+                      cat $CODEBUILD_SRC_DIR_VpcOut/vpc.json; 
+                  else
+                      echo VPC parameters not found, assuming existing VPC. Creating dummy parameters.;
+                      echo {\"VPCID\": \"none\", \"PrivateSubnet1AID\": \"none\", \"PrivateSubnet2AID\": \"none\", \"PublicSubnet1ID\": \"none\", \"PublicSubnet2ID\": \"none\"} > $CODEBUILD_SRC_DIR_VpcOut/vpc.json;
+                      cat $CODEBUILD_SRC_DIR_VpcOut/vpc.json
+                  fi'
                 - |
                   jq -n \
                   --arg AWSRoute53HostedZoneName "$AWSRoute53HostedZoneName" \
@@ -361,6 +401,18 @@ Resources:
           Status: ENABLED
       Name: !Sub ${AWS::StackName}-CreateParameters
       ServiceRole: !Ref CodeBuildServiceRole        
+
+  SnsApprovalTopic:
+    Type: AWS::SNS::Topic
+    Properties: 
+      DisplayName: !Sub ${AWS::StackName} Release Approval
+
+  SnsApprovalSubscription: 
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !Ref PipelineApprovalEmail
+      Protocol: email
+      TopicArn: !Ref SnsApprovalTopic
 
   DockerCodeBuildProject:
     Type: AWS::CodeBuild::Project
@@ -483,24 +535,38 @@ Resources:
                 ProjectName: !Ref GenerateKeysCodeBuildProject
               InputArtifacts:
                 - Name: Source
-            - Name: CreateVPC
-              RunOrder: 1
+            - !If
+              - ExistingVPC
+              - !Ref AWS::NoValue                  
+              - Name: CreateVPC
+                RunOrder: 1
+                ActionTypeId:
+                  Category: Deploy
+                  Owner: AWS
+                  Provider: CloudFormation
+                  Version: '1'
+                Configuration:
+                  ActionMode: REPLACE_ON_FAILURE
+                  StackName: !Sub ${AWS::StackName}-vpc
+                  Capabilities: CAPABILITY_IAM
+                  RoleArn: !GetAtt CodePipelineCloudFormationRole.Arn
+                  TemplatePath: Source::cfn-templates/cfn-vpc.yml
+                  OutputFileName: vpc.json
+                InputArtifacts:
+                  - Name: Source
+                OutputArtifacts:
+                  - Name: VpcOut      
+            - Name: Approve
+              RunOrder: 2
               ActionTypeId:
-                Category: Deploy
+                Category: Approval
                 Owner: AWS
-                Provider: CloudFormation
-                Version: '1'
+                Provider: Manual
+                Version: '1'                
               Configuration:
-                ActionMode: REPLACE_ON_FAILURE
-                StackName: !Sub ${AWS::StackName}-vpc
-                Capabilities: CAPABILITY_IAM
-                RoleArn: !GetAtt CodePipelineCloudFormationRole.Arn
-                TemplatePath: Source::cfn-templates/cfn-vpc.yml
-                OutputFileName: vpc.json
-              InputArtifacts:
-                - Name: Source
-              OutputArtifacts:
-                - Name: VpcOut                             
+                NotificationArn: !Ref SnsApprovalTopic
+                ExternalEntityLink: 'https://test.example.com'
+                CustomData: 'Manual approval needed for release.'
         - Name: DeployCluster
           Actions:
             - Name: GenerateClusterParameters
@@ -515,7 +581,10 @@ Resources:
                 PrimarySource: Source
               InputArtifacts:
                 - Name: Source
-                - Name: VpcOut
+                - !If 
+                  - ExistingVPC
+                  - !Ref AWS::NoValue
+                  - Name: VpcOut
               OutputArtifacts:
                 - Name: ClusterParameters
             - Name: CreateCluster
@@ -532,13 +601,18 @@ Resources:
                 RoleArn: !GetAtt CodePipelineCloudFormationRole.Arn
                 TemplatePath: Source::cfn-templates/cfn-ecs-fargate-cluster.yml 
                 TemplateConfiguration: ClusterParameters::parameters.json
-                ParameterOverrides: |
-                  {
-                  "ImageUrl": {"Fn::GetParam": ["ImageBuild", "image.json", "imageUri"]}
-                  }
+                ParameterOverrides: 
+                  Fn::Join:
+                    - ''
+                    - - '{'
+                      - '"ImageUrl": {"Fn::GetParam": ["ImageBuild", "image.json", "imageUri"]}'
+                      - Fn::If:
+                        - ExistingVPC                      
+                        - !Join ['', [',', '"VPC": "', !Ref VPC, '", "ClusterSubnets": "', !Ref ClusterSubnets, '", "LoadBalancerSubnets": "', !Ref LoadBalancerSubnets, '"']]
+                        - ''
+                      - '}'
               InputArtifacts:
                 - Name: Source
-                - Name: VpcOut
                 - Name: ImageBuild
                 - Name: ClusterParameters
               OutputArtifacts:

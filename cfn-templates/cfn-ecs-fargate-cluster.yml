@@ -204,7 +204,7 @@ Resources:
         AwsvpcConfiguration:
           SecurityGroups: 
             - !Ref ContainerSecurityGroup
-          AssignPublicIp: DISABLED
+          AssignPublicIp: ENABLED
           Subnets: !Ref ClusterSubnets
       DesiredCount: !Ref 'DesiredCount'
       TaskDefinition: !Ref 'TaskDefinition'
