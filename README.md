@@ -87,20 +87,26 @@ Any SATOSA-related code and configuration files  located in the `satosa/` folder
 
 - **satosa/frontends** - Custom frontend plugins. The `saml2_custom.py` file contains a customized frontend that can handle unsolicited requests and custom RelayState parameters.
 
-- **satosa/micro_services** - Custom microservices that can be used to process and customize assertions. The `custom_nameid.py` file is a custom microservice that checks if `NameId` (subject) is in `UserPrincipalName` format and can convert it to `SamAccountName` format. It can also convert the domain to uppercase.
+- **satosa/micro_services** - Custom microservices that can be used to process and customize assertions. 
+
+    The `custom_nameid.py` file is a custom microservice that checks if `NameId` (subject) is in `UserPrincipalName` format and can convert it to `SamAccountName` format. It can also convert the domain to uppercase.
+
+    The `processors/regex_sub_processor.py` file is a custom attribute processor that can use regex patterns to substitute strings in attribute values. In this project, the processor is used to replace the name of the SAML Identity Provider in the `RoleEntitlement` attribute values.
 
 - **satosa/config** - Configuration files for SATOSA and its plugins. Additional details about files within this directory are below:
     - **proxy_conf.yaml** - The main parameters that SATOSA uses for configuration. This includes specifying the backend, frontend, and microservice configurations that are used, as well as logging and attribute mappings.
 
     - **internal_attributes.yaml** - Maps SAML attributes to names that will are used internally by SATOSA. This can also be used to map an Attribute returned by an IdP to the NameID when passing an assertion to the target SP. The SATOSA docs have more details on this.
 
-    - **attributemaps** - Contains the attribute mappings that are used to translate the SAML attributes to "internal" attribtues used by Satosa. The `custom.py` file defined AWS-specific attributes like `Role` and `RoleSessionName`.
+    - **attributemaps** - Contains the attribute mappings that are used to translate the SAML attributes to "internal" attribtues used by Satosa. The `custom.py` file defined AWS-specific attributes like `RoleEntitlement` and `RoleSessionName`.
 
     - **plugins/backends/saml2_backend.yaml** - The configuration for the SAML Proxy's SP. Any target IdP's metadata is defined here. Your IdP's metadata Url is automatically added to this configuration file through an environment variable specified at runtime.
 
     - **plugins/backends/saml2_frontend.yaml** - The configuration for the SAML Proxy's IdP. The configuration specifies the custom front plugin (`satosa.frontends.custom.saml2_custom.SAMLUnsolicitedFrontend`). For unsolicited requests, any RelayState endpoints that should be allowed are defined in the `allowed_relay_state_urls` parameter. Any SP's metadata is also defined here. The AWS SP metadata Url is included here by default.
 
     - **plugins/microservices/custom_nameid.yaml** - The settings used by `custom_nameid.py` microservice (see `satosa/micro_services` above for more details). The microservice's class is specified in this file (`satosa.micro_services.custom.custom_nameid.ConvertUpnToSamAccountFormat`) and `domain_to_upper` is set to `true` by default in the config to convert the domain name to uppercase.
+
+    - **plugins/microservices/attribute_processor.yaml** - The settings used by `regex_sub_processor.py` microservice (see `satosa/micro_services` above for more details). 
 
 
 ### CloudFormation Templates

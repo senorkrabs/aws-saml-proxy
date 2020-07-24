@@ -1,0 +1,28 @@
+# For local testing - builds and runs docker image
+# Must set environment variables in your local shell first - environment variables used below
+---
+version: "2"
+services:
+  satosa: 
+    build:
+      context: ../
+      dockerfile: ./docker/Dockerfile
+    container_name: satosa
+    environment:
+        - DATA_DIR=/etc/satosa/config
+        - PROXY_PORT=8080
+        - STATE_ENCRYPTION_KEY=${SATOSA_STATE_ENCRYPTION_KEY}
+        - PRIVATE_KEY=${SATOSA_PRIVATE_KEY}
+        - CERTIFICATE=${SATOSA_CERTIFICATE}
+        - ORG_DISPLAY_NAME=Test
+        - ORG_NAME=testing
+        - ORG_URL=https://domain.com
+        - SP_ENTITY_ID=${SATOSA_SP_ENTITY_ID}
+        - IDP_METADATA_URL=${SATOSA_IDP_METADATA_URL}
+        - IDP_ENTITY_ID=${SATOSA_IDP_ENTITY_ID}
+        - BASE_URL=${SATOSA_BASE_URL}
+        - REGEX_MATCH_PATTERN=${REGEX_MATCH_PATTERN}
+        - REGEX_REPLACE_PATTERN=${REGEX_REPLACE_PATTERN}
+    ports:
+      - 8080:8080
+    restart: unless-stopped

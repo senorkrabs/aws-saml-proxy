@@ -33,6 +33,10 @@ Parameters:
     Description: (optional) The DNS entry to create in the hosted zone for the cluster load balancer. For example, if the hosted zone is "example.com" and "site.example.com" should redirect to the load balancer, enter "site" without parentheses
     Type: String    
     Default: ''
+  SamlProviderName:
+    Description: (optional) The SAML Identity Provider name used to authenticate to federate into AWS accounts (just the name, not the full Arn). If this is set, any saml-provider values in the RoleEntitlements attribute of SAML assertions will be replaced with this value.
+    Type: String    
+    Default: ''    
   VPC:
     Description: (optional) The Id of a VPC to place the cluster into. If unspecified, a VPC will be created.
     #Type: AWS::EC2::VPC::Id
@@ -69,7 +73,8 @@ Metadata:
           - OrgName
           - OrgDisplayName
           - OrgUrl
-          - AcmCertificateArn         
+          - AcmCertificateArn 
+          - SamlProviderName        
       - Label: 
           default: Route53 DNS (optional)
         Parameters:
@@ -347,6 +352,7 @@ Resources:
                   --arg OrgUrl "$OrgUrl" \
                   --arg PrivateKeySecretArn "$PrivateKeySecretArn" \
                   --arg MetadataCertSecretArn "$MetadataCertSecretArn" \
+                  --arg SamlProviderName "$SamlProviderName" \
                   --arg VPC $(cat $CODEBUILD_SRC_DIR_VpcOut/vpc.json | jq -r '.VPCID') \
                   --arg ClusterSubnets $(cat $CODEBUILD_SRC_DIR_VpcOut/vpc.json | jq -r '.PrivateSubnet1AID + "," + .PrivateSubnet2AID') \
                   --arg LoadBalancerSubnets $(cat $CODEBUILD_SRC_DIR_VpcOut/vpc.json | jq -r '.PublicSubnet1ID + "," + .PublicSubnet2ID') \
@@ -362,6 +368,7 @@ Resources:
                         OrgUrl: $OrgUrl,
                         PrivateKeySecretArn: $PrivateKeySecretArn, 
                         MetadataCertSecretArn: $MetadataCertSecretArn,
+                        SamlProviderName: $SamlProviderName,
                         VPC: $VPC,
                         ClusterSubnets: $ClusterSubnets,
                         LoadBalancerSubnets: $LoadBalancerSubnets
@@ -394,8 +401,10 @@ Resources:
             Value: !Ref OrgUrl
           - Name: PrivateKeySecretArn
             Value: !Ref PrivateKeySecret
+          - Name: SamlProviderName
+            Value: !Ref SamlProviderName
           - Name: MetadataCertSecretArn
-            Value: !Ref MetadataCertificateSecret
+            Value: !Ref MetadataCertificateSecret    
       LogsConfig:
         CloudWatchLogs:
           Status: ENABLED

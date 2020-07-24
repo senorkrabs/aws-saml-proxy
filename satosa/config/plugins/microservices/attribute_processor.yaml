@@ -1,0 +1,10 @@
+module: satosa.micro_services.attribute_processor.AttributeProcessor
+name: AttributeProcessor
+config:
+  process:
+  - attribute: role
+    processors:
+    - name: RegexSubProcessor
+      module: satosa.micro_services.custom.processors.regex_sub_processor
+      regex_sub_match_pattern: !ENV REGEX_MATCH_PATTERN 
+      regex_sub_replace_pattern: !ENV REGEX_REPLACE_PATTERN

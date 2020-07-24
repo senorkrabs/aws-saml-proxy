@@ -72,7 +72,10 @@ Parameters:
     Description: (optional) The DNS entry to create in the hosted zone for the cluster load balancer. For example, if the hosted zone is "example.com" and "site.example.com" should redirect to the load balancer, enter "site" without parentheses
     Type: String    
     Default: ''
-
+  SamlProviderName:
+    Description: (optional) The SAML Identity Provider name used to authenticate to federate into AWS accounts (just the name, not the full Arn). If this is set, any saml-provider values in the RoleEntitlements attribute of SAML assertions will be replaced with this value.
+    Type: String    
+    Default: ''   
 
 Metadata:
   'AWS::CloudFormation::Interface':
@@ -84,7 +87,8 @@ Metadata:
           - IdpMetadataUrl
           - PrivateKeySecretArn
           - MetadataCertSecretArn   
-          - AcmCertificateArn                 
+          - AcmCertificateArn  
+          - SamlProviderName               
       - Label:
           default: Cluster Configuration
         Parameters:
@@ -115,6 +119,7 @@ Metadata:
           - ContainerMemory       
 Conditions:
     HasRoute53HostedZoneName: !Not [!Equals [!Ref 'AWSRoute53HostedZoneName', '']]
+    HasSamlProviderName: !Not [!Equals [!Ref 'SamlProviderName', '']]
 Resources:
   StateKeySecret:
     Type: AWS::SecretsManager::Secret
@@ -257,6 +262,13 @@ Resources:
               Value: '80'
             - Name: METADATA_DIR
               Value: /etc/satosa/config/metadata
+            - Name: REGEX_MATCH_PATTERN
+              Value: '(?<=saml-provider\/)(.*)(?=,|$)'
+            - Name: REGEX_REPLACE_PATTERN
+              Value: !If
+                - HasSamlProviderName
+                - !Sub ${SamlProviderName} 
+                - '\1'
                  
           LogConfiguration:
             LogDriver: awslogs

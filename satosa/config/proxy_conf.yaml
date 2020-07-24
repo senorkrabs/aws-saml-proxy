@@ -17,6 +17,7 @@ FRONTEND_MODULES:
 
 MICRO_SERVICES:
   - "/etc/satosa/config/plugins/microservices/custom_nameid.yaml"
+  - "/etc/satosa/config/plugins/microservices/attribute_processor.yaml"    
 
 LOGGING:
   version: 1
