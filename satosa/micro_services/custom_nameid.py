@@ -21,6 +21,9 @@ class ConvertUpnToSamAccountFormat(ResponseMicroService):
         subject_id = data.subject_id
         regex = r'^([^@]+)@(.*)'
         logger.debug("Parsing NameID: {}".format (data.subject_id))
+        if subject_id == None : 
+            logger.warn("NameID is empty and will be skipped.")
+            return super().process(context, data)
         parts = re.match(regex, subject_id)
         
         if parts != None : 

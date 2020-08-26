@@ -28,5 +28,3 @@ config:
         endpoints:
           assertion_consumer_service:
           - [<base_url>/<name>/acs/post, 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST']
-        name_id_format: ['urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified', 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent', 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress']
-        name_id_format_allow_create: true
